@@ -22,7 +22,7 @@ Completely programmed by AI tools, thanks to 🎉Kimi(Moonshot) ChatGPT(OpenAI) 
 ### Option 1: cURL (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-username/zsh-filepg/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/2O48/zsh-filepg/main/install.sh | sh
 ```
 
 Then restart your terminal or run:
@@ -34,14 +34,14 @@ source ~/.zshrc
 ### Option 2: wget
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/your-username/zsh-filepg/main/install.sh | sh
+wget -qO- https://raw.githubusercontent.com/2O48/zsh-filepg/main/install.sh | sh
 ```
 
 ### Option 3: Manual Install
 
 ```bash
 mkdir -p ~/.zsh-filepg
-curl -fsSL https://raw.githubusercontent.com/your-username/zsh-filepg/main/filepg.zsh -o ~/.zsh-filepg/filepg.zsh
+curl -fsSL https://raw.githubusercontent.com/2O48/zsh-filepg/main/filepg.zsh -o ~/.zsh-filepg/filepg.zsh
 echo 'source ~/.zsh-filepg/filepg.zsh' >> ~/.zshrc
 source ~/.zsh-filepg/filepg.zsh
 ```
@@ -49,7 +49,7 @@ source ~/.zsh-filepg/filepg.zsh
 ### Option 4: Oh My Zsh Plugin (Recommended for OMZ users)
 
 ```bash
-git clone https://github.com/your-username/zsh-filepg ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-filepg
+git clone https://github.com/2O48/zsh-filepg ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-filepg
 ```
 
 Edit `~/.zshrc` and add to plugins:
