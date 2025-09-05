@@ -11,10 +11,10 @@ Completely programmed by AI tools, thanks to 🎉Kimi(Moonshot) ChatGPT(OpenAI) 
 ## ✨ Features:
 - 📊 Real-time progress (size, ETA)
 - 🔍 `-t` / `--test` dry-run mode
-- 🚫 `--x="*.tmp logs/"` exclude with glob patterns
+- 🚫 `--x='*.tmp logs/'` exclude with glob patterns
 - 🔐 Auto `sudo` for protected files
 - 💡 `rmpg` asks for confirmation before deletion
-- 🧩 `--x=` supports tab completion
+- 🧩 `tab` supports tab completion
 - 🍎 macOS & Linux compatible
 
 ## 📦 Install
@@ -84,13 +84,15 @@ source ~/.zshrc
    ```
 
 3. **🤚 Exclude with `--x`**: Use `--x` to exclude files/directories. Supports tab completion and wildcards like `*`, `?`.  
+   Note: You need to wrap the parameters to be excluded with --x='a' or --x="a", you cannot write directly --x=a.
+
    Example:
    ```zsh
-   % rmpg --x=videos/desert* videos/*.mp4
-   Will Delete the following:
-   (file) videos/highspeed20_00002.mp4 (950K)
-   (file) videos/highspeed20_00028.mp4 (1M)
-   (file) videos/highspeed20_00041.mp4 (1M)
+   % cppg -t --x='(1) test*.' *.mp4 ~/videos
+   Will Copy the following:
+   (File) highspeed20_00002.mp4 (950K)
+   (File) highspeed20_00028.mp4 (1M)
+   (File) highspeed20_00041.mp4 (1M)
    Total: 3M
    Confirm deletion? [y/N]:
    ```
@@ -104,11 +106,11 @@ source ~/.zshrc
    ```zsh
    % rmpg videos/*.mp4
    Will Delete the following:
-   (file) videos/desert_00001.mp4 (1M)
-   (file) videos/desert_00005.mp4 (1M)
-   (file) videos/highspeed20_00002.mp4 (950K)
-   (file) videos/highspeed20_00028.mp4 (1M)
-   (file) videos/highspeed20_00041.mp4 (1M)
+   (File) videos/desert_00001.mp4 (1M)
+   (File) videos/desert_00005.mp4 (1M)
+   (File) videos/highspeed20_00002.mp4 (950K)
+   (File) videos/highspeed20_00028.mp4 (1M)
+   (File) videos/highspeed20_00041.mp4 (1M)
    Total: 5M
    Confirm deletion? [y/N]:
    ```

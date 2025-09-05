@@ -1,6 +1,6 @@
 #!/usr/bin/env zsh
 # filepg.zsh - File operations with progress bar for zsh
-# GitHub: https://github.com/2O48/zsh-filepg
+# GitHub: https://github.com/2O48/zsh-filepg      
 # Author: 2O48
 # License: MIT
 
@@ -69,7 +69,15 @@ _draw_progress() {
 }
 
 # -------------------------------
-# Parse arguments: --x=, -t, --x
+# Store original patterns without pre-processing
+# -------------------------------
+_auto_escape_pattern() {
+  local pattern="$1"
+  echo "$pattern"
+}
+
+# -------------------------------
+# Parse arguments: only --x=... allowed, no bare --x
 # -------------------------------
 _parse_args() {
   DRY_RUN=0
@@ -82,11 +90,12 @@ _parse_args() {
         DRY_RUN=1
         ;;
       --x=*)
-        local exlist="${arg#--x=}"
-        [[ -n "$exlist" ]] && _PX_EXCLUDES+=("${=exlist}")
-        ;;
-      --x)
-        (( ++i )) && [[ $i -lt $# ]] && _PX_EXCLUDES+=("${@[i+1]}")
+        local ex="${arg#--x=}"
+        if [[ -n "$ex" ]]; then
+          # Auto-escape the pattern
+          local escaped_pattern=$(_auto_escape_pattern "$ex")
+          _PX_EXCLUDES+=("$escaped_pattern")
+        fi
         ;;
       *)
         _PX_ARGS+=("$arg")
@@ -290,17 +299,41 @@ _cpmv_base() {
 
   (( ${#all_sources[@]} == 0 )) && { echo "No matching files found"; return 1; }
 
+  # Filter files based on exclude patterns
   local filtered=()
   for f in "${all_sources[@]}"; do
     local matched=0
-    for e in "${excludes[@]}"; do
-      if [[ "$e" == *[*?[]* ]]; then
-        [[ "$f" == ${~e} ]] && matched=1 && break
-      else
-        [[ "$f" = "$e" ]] && matched=1 && break
+    local fname="${f##*/}"
+    for original_pattern in "${excludes[@]}"; do
+      # Real-time escape user provided patterns
+      local working_pattern="$original_pattern"
+      working_pattern="${working_pattern//\\/\\\\}"  # \ -> \\
+      working_pattern="${working_pattern//\(/\(}"    # ( -> \(
+      working_pattern="${working_pattern//\)/\)}"    # ) -> \)
+      working_pattern="${working_pattern//\[/\[}"    # [ -> \[
+      working_pattern="${working_pattern//\]/\]}"    # ] -> \]
+      working_pattern="${working_pattern//\{/\\\{}"   # { -> \{
+      working_pattern="${working_pattern//\}/\\\}}"   # } -> \}
+      working_pattern="${working_pattern//\|/\\|}"   # | -> \|
+      working_pattern="${working_pattern//\~/\\~}"   # ~ -> \~
+      working_pattern="${working_pattern//\^/\\^}"   # ^ -> \^
+      working_pattern="${working_pattern//\$/\\\$}"  # $ -> \$
+      working_pattern="${working_pattern//\`/\\\`}"  # ` -> \`
+      working_pattern="${working_pattern// /\\ }"    # space -> \space
+      working_pattern="${working_pattern//\"/\\\"}"  # " -> \"
+      working_pattern="${working_pattern//\'/\\\'}"  # ' -> \'
+      # Note: * and ? are preserved as glob wildcards
+      
+      # Use eval for safe pattern matching
+      local eval_string="[[ '$fname' == $working_pattern ]]"
+      if eval "$eval_string" 2>/dev/null; then
+        matched=1
+        break
       fi
     done
-    (( matched == 0 )) && filtered+=("$f")
+    if (( matched == 0 )); then
+      filtered+=("$f")
+    fi
   done
 
   (( ${#filtered[@]} == 0 )) && { echo "No files to process (all excluded)"; return 0; }
@@ -320,16 +353,14 @@ _cpmv_base() {
     return 0
   fi
 
-  # Building the rsync command
   local rsync_cmd=(-aHAX --partial --inplace)
   for e in "${excludes[@]}"; do
-    rsync_cmd+=(--exclude="$e")
+    rsync_cmd+=(--exclude="$e")  # rsync natively uses glob patterns
   done
   if [[ "$operation" == "move" ]]; then
     rsync_cmd+=(--remove-source-files)
   fi
 
-  # Directly call _execute_batch_operation and pass in the complete command structure
   _execute_batch_operation "$operation" "$dst" "${rsync_cmd[@]}" -- "${filtered[@]}"
 }
 
@@ -367,17 +398,28 @@ rmpg() {
 
   all_targets=(${(u)all_targets})
 
+  # Filter files based on exclude patterns (same logic as _cpmv_base)
   local filtered=()
   for f in "${all_targets[@]}"; do
     local matched=0
-    for e in "${excludes[@]}"; do
-      if [[ "$e" == *[*?[]* ]]; then
-        [[ "$f" == ${~e} ]] && matched=1 && break
-      else
-        [[ "$f" = "$e" ]] && matched=1 && break
+    local fname="${f##*/}"
+    for original_pattern in "${excludes[@]}"; do
+      # Real-time escape user provided patterns
+      local working_pattern="$original_pattern"
+      working_pattern="${working_pattern//\(/\(}"
+      working_pattern="${working_pattern//\)/\)}"
+      working_pattern="${working_pattern// /\\ }"
+      
+      # Use eval for safe pattern matching
+      local eval_string="[[ '$fname' == $working_pattern ]]"
+      if eval "$eval_string" 2>/dev/null; then
+        matched=1
+        break
       fi
     done
-    (( matched == 0 )) && filtered+=("$f")
+    if (( matched == 0 )); then
+      filtered+=("$f")
+    fi
   done
 
   (( ${#filtered[@]} == 0 )) && { echo "No files to delete (all excluded)"; return 0; }
@@ -433,58 +475,3 @@ rmpg() {
   _draw_progress $total_size $total_size $elapsed
   echo
 }
-
-# -------------------------------
-# Completion for --x=
-# -------------------------------
-_x_complete() {
-  local cur context state line
-  cur="${words[CURRENT]}"
-
-  if [[ "$cur" != --x=* ]]; then
-    _files -/
-    return
-  fi
-
-  local raw="${cur#--x=}"
-  local dir="." prefix=""
-
-  if [[ "$raw" == */* ]]; then
-    dir="${raw%/*}"
-    prefix="${raw##*/}"
-    dir="${dir/#~/$HOME}"
-  else
-    prefix="$raw"
-  fi
-
-  if [[ -d "$dir" ]]; then
-    dir="$(cd -q "$dir" && pwd)"
-  else
-    _files -/
-    return
-  fi
-
-  local -a matches
-  for file in "$dir"/* "$dir"/.*; do
-    [[ -e "$file" ]] || continue
-    local fname="${file##*/}"
-    [[ "$fname" == .* ]] && [[ "$fname" == "." || "$fname" == ".." ]] && continue
-    [[ "$fname" == "$prefix"* ]] && matches+=("$fname")
-  done
-
-  (( ${#matches[@]} == 0 )) && return 1
-
-  local prefix_str="--x="
-  if [[ "$raw" == */* ]]; then
-    prefix_str="--x=${raw%/*}/"
-  fi
-
-  compadd -U -Q -S '' -p "$prefix_str" -- "${matches[@]}"
-}
-
-# -------------------------------
-# Register completion
-# -------------------------------
-if [[ -o interactive ]] && (( ${+functions[_x_complete]} )); then
-  compdef _x_complete cppg mvpg rmpg
-fi
