@@ -40,17 +40,10 @@ _human_size() {
 _draw_progress() {
   local done=$1 total=$2 elapsed=$3
   [[ $total -eq 0 ]] && total=1
+  (( done < 0 )) && done=0
+  (( done > total )) && done=$total
 
   local percent=$(( done * 100 / total ))
-  local bar_width=50
-  local filled=$(( percent * bar_width / 100 ))
-  local empty=$(( bar_width - filled ))
-
-  local bar="["
-  bar+=$(printf "%0.s=" $(seq 1 $filled) 2>/dev/null || yes = | head -n $filled)
-  bar+=$(printf "%0.s " $(seq 1 $empty) 2>/dev/null || yes " " | head -n $empty)
-  bar+="]"
-
   local remain_sec=0
   if (( done > 0 )); then
     remain_sec=$(( (total - done) * elapsed / done ))
@@ -61,11 +54,29 @@ _draw_progress() {
     $(((remain_sec % 3600) / 60)) \
     $((remain_sec % 60)))
 
-  printf "\r%s %3d%% %s/%s ETA %s" \
-    "$bar" "$percent" \
-    "$(_human_size $done)" \
-    "$(_human_size $total)" \
-    "$eta_hms"
+  local done_human="$(_human_size $done)"
+  local total_human="$(_human_size $total)"
+  local progress_text=$(printf " %3d%% %s/%s ETA %s" \
+    "$percent" "$done_human" "$total_human" "$eta_hms")
+
+  local columns=${COLUMNS:-80}
+  local bar_width=$(( columns - ${#progress_text} - 2 ))
+  (( bar_width > 50 )) && bar_width=50
+  (( bar_width < 10 )) && bar_width=10
+
+  local filled=$(( percent * bar_width / 100 ))
+  local empty=$(( bar_width - filled ))
+
+  local bar="["
+  bar+=$(printf "%0.s=" $(seq 1 $filled) 2>/dev/null || yes = | head -n $filled)
+  bar+=$(printf "%0.s " $(seq 1 $empty) 2>/dev/null || yes " " | head -n $empty)
+  bar+="]"
+
+  printf "\r\033[2K%s%s" "$bar" "$progress_text" >&2
+}
+
+_finish_progress() {
+  printf "\n" >&2
 }
 
 # -------------------------------
@@ -183,6 +194,18 @@ _get_target_size() {
 }
 
 # -------------------------------
+# Resolve where a copied/moved source will appear
+# -------------------------------
+_operation_target_path() {
+  local src="$1" dst="$2" source_count="$3"
+  if (( source_count == 1 )) && [[ ! -d "$dst" ]]; then
+    echo "$dst"
+  else
+    echo "$dst/${src##*/}"
+  fi
+}
+
+# -------------------------------
 # Execute batch operation with progress
 # -------------------------------
 _execute_batch_operation() {
@@ -192,17 +215,21 @@ _execute_batch_operation() {
   local dst="$2"
   shift 2
 
-  # Now $@ is the complete rsync options + -- + source file
-  local full_rsync_args=("$@")
+  # Now $@ is the complete rsync options + -- + source files
+  local rsync_opts=()
   local sources=()
-  local i=0
-  # Extract the source files after --
-  while (( i < $# )); do
-    if [[ "${@[i+1]}" == "--" ]]; then
-      sources=("${@[i+2,-1]}")
-      break
+  local seen_separator=0
+  local arg
+  for arg in "$@"; do
+    if [[ "$arg" == "--" && $seen_separator -eq 0 ]]; then
+      seen_separator=1
+      continue
     fi
-    ((i++))
+    if (( seen_separator )); then
+      sources+=("$arg")
+    else
+      rsync_opts+=("$arg")
+    fi
   done
 
   [[ ${#sources[@]} -eq 0 ]] && return 0
@@ -216,28 +243,50 @@ _execute_batch_operation() {
 
   _need_sudo "$dst" && { sudo -v || return 1; _sudo=(sudo); }
 
+  local source_count=${#sources[@]}
+  local target_paths=()
+  local target_baselines=()
+  local src target
+  for src in "${sources[@]}"; do
+    target="$(_operation_target_path "$src" "$dst" "$source_count")"
+    target_paths+=("$target")
+    target_baselines+=("$(_get_target_size "$target")")
+  done
+
+  local rsync_dst="$dst/"
+  if (( source_count == 1 )) && [[ ! -d "$dst" ]]; then
+    rsync_dst="$dst"
+  fi
+
   if (( DRY_RUN )); then
-    printf '[DRY-RUN] %s rsync %s %s/\n' "${_sudo[*]}" "${full_rsync_args[*]}" "$dst"
-    for ((i=1; i<=100; i++)); do
-      local s=$(( total_size * i / 100 ))
+    printf '[DRY-RUN] %s rsync %s -- %s %s\n' "${_sudo[*]}" "${rsync_opts[*]}" "${sources[*]}" "$rsync_dst"
+    local step
+    for step in {1..100}; do
+      local s=$(( total_size * step / 100 ))
       local t=$(( $(date +%s) - start_time ))
       _draw_progress $s $total_size $t
       sleep 0.05
     done
-    echo
+    _finish_progress
     return 0
   fi
 
-  # ✅ Correct call: sudo rsync [options] --sources... dst/
-  "${_sudo[@]}" rsync "${rsync_opts[@]}" -- "${sources[@]}" "$dst/" &
+  "${_sudo[@]}" rsync "${rsync_opts[@]}" -- "${sources[@]}" "$rsync_dst" &
   local pid=$!
 
   while kill -0 $pid 2>/dev/null; do
     local current=0
-    for src in "${sources[@]}"; do
-      local target="$dst/${src##*/}"
-      current=$(( current + $(_get_target_size "$target") ))
+    local pending_targets=("${target_paths[@]}")
+    local pending_baselines=("${target_baselines[@]}")
+    while (( ${#pending_targets[@]} > 0 )); do
+      local current_target_size=$(_get_target_size "${pending_targets[1]}")
+      local delta=$(( current_target_size - pending_baselines[1] ))
+      (( delta < 0 )) && delta=0
+      current=$(( current + delta ))
+      shift pending_targets
+      shift pending_baselines
     done
+    (( current > total_size )) && current=$total_size
 
     if (( current != prev_size )); then
       local elapsed=$(( $(date +%s) - start_time ))
@@ -253,7 +302,7 @@ _execute_batch_operation() {
 
   local elapsed=$(( $(date +%s) - start_time ))
   _draw_progress $total_size $total_size $elapsed
-  echo
+  _finish_progress
 
   # Clean up source files after moving
   if [[ "$operation" == "move" && $DRY_RUN -eq 0 && $result -eq 0 ]]; then
@@ -379,6 +428,32 @@ mvpg() {
 }
 
 # -------------------------------
+# Build a recursive delete plan
+# -------------------------------
+_collect_delete_plan() {
+  typeset -ga _DELETE_FILES=() _DELETE_SIZES=() _DELETE_DIRS=()
+  local f item
+  local find_cmd=(find)
+  (( ${#_sudo[@]} > 0 )) && find_cmd=("${_sudo[@]}" find)
+
+  for f in "$@"; do
+    if [[ -L "$f" || -f "$f" ]]; then
+      _DELETE_FILES+=("$f")
+      _DELETE_SIZES+=("$(_get_target_size "$f")")
+    elif [[ -d "$f" ]]; then
+      while IFS= read -r -d $'\0' item; do
+        _DELETE_FILES+=("$item")
+        _DELETE_SIZES+=("$(_get_target_size "$item")")
+      done < <("${find_cmd[@]}" "$f" \( -type f -o -type l \) -print0 2>/dev/null)
+
+      while IFS= read -r -d $'\0' item; do
+        _DELETE_DIRS+=("$item")
+      done < <("${find_cmd[@]}" "$f" -depth -type d -print0 2>/dev/null)
+    fi
+  done
+}
+
+# -------------------------------
 # rmpg: Remove with progress and confirmation
 # -------------------------------
 rmpg() {
@@ -454,24 +529,33 @@ rmpg() {
   read "confirm?Confirm deletion? [y/N]: "
   [[ "$confirm" != "y" && "$confirm" != "Y" ]] && { echo "Cancelled"; return 0; }
 
-  local deleted=0 start=$(date +%s)
   local _sudo=()
-  local i=0
   for f in "${filtered[@]}"; do
-    local sz=${file_sizes[i]}
-    deleted=$(( deleted + sz ))
     _need_sudo "$f" && [[ ${#_sudo[@]} -eq 0 ]] && { sudo -v; _sudo=(sudo); }
-    if [[ -f "$f" ]]; then
-      _run "${_sudo[@]}" rm -f -- "$f"
-    elif [[ -d "$f" ]]; then
-      _run "${_sudo[@]}" rm -rf -- "$f"
-    fi
+  done
+
+  _collect_delete_plan "${filtered[@]}"
+
+  local deleted=0 start=$(date +%s)
+  _draw_progress 0 $total_size 0
+
+  local pending_delete_files=("${_DELETE_FILES[@]}")
+  local pending_delete_sizes=("${_DELETE_SIZES[@]}")
+  while (( ${#pending_delete_files[@]} > 0 )); do
+    local sz=${pending_delete_sizes[1]:-0}
+    _run "${_sudo[@]}" rm -f -- "${pending_delete_files[1]}"
+    deleted=$(( deleted + sz ))
     local elapsed=$(( $(date +%s) - start ))
     _draw_progress $deleted $total_size $elapsed
-    ((i++))
+    shift pending_delete_files
+    shift pending_delete_sizes
+  done
+
+  for f in "${_DELETE_DIRS[@]}"; do
+    _run "${_sudo[@]}" rmdir -- "$f" 2>/dev/null
   done
 
   local elapsed=$(( $(date +%s) - start ))
   _draw_progress $total_size $total_size $elapsed
-  echo
+  _finish_progress
 }
